@@ -255,497 +255,179 @@
         </div>
     </div>
 
-    <script>
-      (function(){
-        // ========== CONFIG ==========
-        // Auto-detect API base: local dev vs deployed domain. Change deployed domain below.
-        const API_BASE = (window.location.hostname.includes('127.0.0.1') || window.location.hostname.includes('localhost'))
-          ? 'http://127.0.0.1:8000'
-          : 'https://your-render-domain.onrender.com'; // <-- replace with your Render domain
-      
-        const CATEGORY_LABELS = ['Groceries','Medicines','Packaged Food','Dairy & Milk Products'];
-        const LOW_STOCK_THRESHOLD = 3;
-      
-        // ========== DOM refs (keeps your existing IDs) ==========
-        const loadingOverlay = document.getElementById('loadingOverlay');
-        const nameInput = document.getElementById('nameInput');
-        const qtyInput = document.getElementById('qtyInput');
-        const priceInput = document.getElementById('priceInput');
-        const expiryInput = document.getElementById('expiryInput');
-        const categoryInput = document.getElementById('categoryInput');
-        const addBtn = document.getElementById('addBtn');
-        const inventoryBody = document.getElementById('inventoryBody');
-      
-        const countTotal = document.getElementById('countTotal');
-        const countGroceries = document.getElementById('countGroceries');
-        const countMedicines = document.getElementById('countMedicines');
-        const countPackaged = document.getElementById('countPackaged');
-        const countDairy = document.getElementById('countDairy');
-        const countLow = document.getElementById('countLow');
-        const lowCount = document.getElementById('lowCount');
-        const alertDropdown = document.getElementById('alertDropdown');
-        const lowAlertBox = document.getElementById('lowAlertBox');
-        const categoryFilter = document.getElementById('categoryFilter');
-        const sortSelect = document.getElementById('sortSelect');
-        const totalValueEl = document.getElementById('totalValue');
-        const savingsValueEl = document.getElementById('savingsValue');
-        const logoutBtn = document.getElementById('logoutBtn');
-        const greetingEl = document.getElementById('greeting');
-      
-        // modal refs
-        const modalBackdrop = document.getElementById('modalBackdrop');
-        const modalTitle = document.getElementById('modalTitle');
-        const modalName = document.getElementById('modalName');
-        const modalQty = document.getElementById('modalQty');
-        const modalPrice = document.getElementById('modalPrice');
-        const modalExpiry = document.getElementById('modalExpiry');
-        const modalCategory = document.getElementById('modalCategory');
-        const modalCancel = document.getElementById('modalCancel');
-        const modalSave = document.getElementById('modalSave');
-        const modalDelete = document.getElementById('modalDelete');
-      
-        // Chart
-        const ctxEl = document.getElementById('categoryChart');
-        const chart = ctxEl ? new Chart(ctxEl.getContext('2d'), {
-          type: 'doughnut',
-          data: { labels: CATEGORY_LABELS, datasets: [{ data: [0,0,0,0], backgroundColor: ['#2563EB','#9333EA','#FBBF24','#D946EF'] }]},
-          options: { plugins:{ legend:{ position:'bottom' } }, responsive:true, maintainAspectRatio:true }
-        }) : null;
-      
-        // state
-        let inventory = [];
-        let userId = null;
-        let username = null;
-        let editingId = null;
-      
-        // ---------- util ----------
-        function showLoading(){ if(loadingOverlay) loadingOverlay.classList.remove('hidden'); }
-        function hideLoading(){ if(loadingOverlay) loadingOverlay.classList.add('hidden'); }
-        function isExpired(expiryStr){
-          if(!expiryStr) return false;
-          const t = new Date(); t.setHours(0,0,0,0);
-          const e = new Date(expiryStr); e.setHours(0,0,0,0);
-          return e < t;
-        }
-        function formatExpiry(dateStr){
-          if(!dateStr) return '-';
-          try { const d = new Date(dateStr); return d.toLocaleDateString('en-US',{month:'short', day:'numeric', year:'numeric'}); }
-          catch { return dateStr; }
-        }
-        function escapeHtml(text){ if(text===0) return '0'; if(!text) return ''; return String(text).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;'); }
-      
-        // ---------- Auth helpers (access + refresh) ----------
-        function getAccessToken(){ return localStorage.getItem('access_token'); }
-        function getRefreshToken(){ return localStorage.getItem('refresh_token'); }
-        function setTokens(access, refresh){ if(access) localStorage.setItem('access_token', access); if(refresh) localStorage.setItem('refresh_token', refresh); }
-        function clearAuth(){ localStorage.removeItem('access_token'); localStorage.removeItem('refresh_token'); localStorage.removeItem('user_id'); localStorage.removeItem('username'); localStorage.removeItem('isLoggedIn'); }
-      
-        // Refresh access token using refresh token. Returns new access token or null.
-        async function refreshAccessToken(){
-          const refresh = getRefreshToken();
-          if(!refresh) return null;
-          try {
-            const res = await fetch(`${API_BASE}/refresh`, {
-              method: 'POST',
-              headers: {'Content-Type':'application/json'},
-              body: JSON.stringify({ refresh_token: refresh })
-            });
-            if(!res.ok) return null;
-            const data = await res.json();
-            if(data && data.access_token){
-              setTokens(data.access_token, null);
-              return data.access_token;
-            }
-            return null;
-          } catch(err){
-            console.error('Refresh failed', err);
-            return null;
-          }
-        }
-      
-        // fetch wrapper that adds Authorization header and auto-refreshes once on 401
-        async function fetchWithAuth(path, opts = {}){
-          opts.headers = opts.headers ? {...opts.headers} : {};
-          let token = getAccessToken();
-          if(token) opts.headers['Authorization'] = 'Bearer ' + token;
-          if(!opts.headers['Content-Type'] && !(opts.body instanceof FormData)) opts.headers['Content-Type'] = 'application/json';
-      
-          let res;
-          try {
-            res = await fetch(`${API_BASE}${path}`, opts);
-          } catch(err){
-            console.error('Network error', err);
-            throw err;
-          }
-      
-          if((res.status === 401 || res.status === 403)) {
-            // Try refresh once
-            const newToken = await refreshAccessToken();
-            if(newToken){
-              opts.headers['Authorization'] = 'Bearer ' + newToken;
-              try {
-                res = await fetch(`${API_BASE}${path}`, opts);
-              } catch(err){
-                console.error('Retry network error', err);
-                throw err;
-              }
-            } else {
-              // cannot refresh -> force logout
-              clearAuth();
-              alert('Session expired. Please log in again.');
-              window.location.href = 'index.html';
-              return null;
-            }
-          }
-          return res;
-        }
-      
-        // ---------- auth/session ----------
-        function ensureAuth(){
-          // login page must set these on success:
-          // localStorage.setItem('access_token', ...);
-          // localStorage.setItem('refresh_token', ...);
-          // localStorage.setItem('user_id', String(...));
-          // localStorage.setItem('username', String(...));
-          const at = getAccessToken();
-          const uid = localStorage.getItem('user_id');
-          const uname = localStorage.getItem('username') || 'User';
-          if(!uid || !uname){
-            clearAuth();
-            window.location.href = 'index.html';
-            return false;
-          }
-          userId = uid;
-          username = uname;
-          if(greetingEl) greetingEl.textContent = `Hello, ${username} 👋`;
-          // attempt to ensure access token exists; if missing, attempt refresh (synchronous-ish)
-          if(!at){
-            // try to refresh synchronously (await in init)
-            return true; // caller will call refresh in init
-          }
-          return true;
-        }
-      
-        // ---------- backend API calls ----------
-        async function fetchInventoryFromServer(){
-          if(!userId) return;
-          showLoading();
-          try {
-            const res = await fetchWithAuth(`/inventory/${encodeURIComponent(userId)}`, { method:'GET' });
-            if(!res){
-              inventory = [];
-              render();
-              return;
-            }
-            if(!res.ok){
-              console.error('Fetch inventory error', res.status);
-              const text = await res.text().catch(()=>null);
-              console.error(text);
-              inventory = [];
-              render();
-              return;
-            }
-            const payload = await res.json().catch(()=>({ items:[] }));
-            const items = payload.items || [];
-            // Map to normalized shape if backend uses different names
-            inventory = items.map(i => ({
-              id: i.id ?? i.item_id ?? i._id ?? i.id_str ?? null,
-              name: i.pname ?? i.name ?? i.product_name ?? '',
-              qty: Number(i.qty ?? i.quantity ?? 0),
-              price: Number(i.price ?? i.unit_price ?? 0),
-              expiry: i.expiry ?? i.expiry_date ?? null,
-              category: i.category ?? i.cat ?? 'Uncategorized',
-              usedValue: Number(i.used_value ?? i.usedValue ?? 0),
-              createdAt: i.created_at ?? i.createdAt ?? Date.now()
-            }));
-            render();
-          } catch(err){
-            console.error('Fetch inventory error', err);
-            inventory = [];
-            render();
-          } finally { hideLoading(); }
-        }
-      
-        async function addItemToServer(e){
-          e && e.preventDefault();
-          if(!userId) return console.warn('No user id');
-          const name = nameInput.value.trim();
-          if(!name) return alert('Item name required');
-          const body = {
-            pname: name,
-            qty: Number(qtyInput.value) || 0,
-            price: Number(priceInput.value) || 0,
-            expiry: expiryInput.value || null,
-            category: categoryInput.value || 'Groceries',
-            used_value: 0
-          };
-          showLoading();
-          try {
-            const res = await fetchWithAuth(`/add_item/${encodeURIComponent(userId)}`, {
-              method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body)
-            });
-            if(!res){
-              // logout handled in fetchWithAuth
-              return;
-            }
-            if(!res.ok){
-              const data = await res.json().catch(()=>null);
-              alert(data?.detail || data?.message || `Add failed (status ${res.status})`);
-            } else {
-              clearAddForm();
-              await fetchInventoryFromServer();
-            }
-          } catch(err){
-            console.error('Add item error', err);
-            alert('Cannot reach server to add item.');
-          } finally { hideLoading(); }
-        }
-      
-        async function updateItemOnServer(itemId, updates){
-          if(!userId) return;
-          showLoading();
-          try {
-            const res = await fetchWithAuth(`/update_item/${encodeURIComponent(userId)}/${encodeURIComponent(itemId)}`, {
-              method: 'PUT', headers: { 'Content-Type':'application/json' }, body: JSON.stringify(updates)
-            });
-            if(!res) return false;
-            if(res.ok) { await fetchInventoryFromServer(); return true; }
-            const txt = await res.text().catch(()=>null);
-            console.error('Update failed', res.status, txt);
-            alert(`Update failed: ${res.status}`);
-            return false;
-          } catch(err){
-            console.error('Update error', err);
-            alert('Cannot reach server to update item.');
-            return false;
-          } finally { hideLoading(); }
-        }
-      
-        async function deleteItemOnServer(itemId){
-          if(!userId) return;
-          if(!confirm('Are you sure you want to delete this item?')) return;
-          showLoading();
-          try {
-            const res = await fetchWithAuth(`/delete_item/${encodeURIComponent(userId)}/${encodeURIComponent(itemId)}`, { method:'DELETE' });
-            if(!res) return;
-            if(res.ok) { await fetchInventoryFromServer(); }
-            else {
-              const txt = await res.text().catch(()=>null);
-              console.error('Delete failed', res.status, txt);
-              alert('Delete failed: ' + res.status);
-            }
-          } catch(err){
-            console.error('Delete error', err);
-            alert('Cannot reach server to delete item.');
-          } finally { hideLoading(); }
-        }
-      
-        async function useItemOnServer(itemId, n=1){
-          if(!userId) return;
-          const item = inventory.find(x => x.id === itemId);
-          if(!item) return;
-          const newQty = Math.max(0, (Number(item.qty)||0) - n);
-          const updates = { qty: newQty };
-          if(item.expiry && !isExpired(item.expiry)) {
-            updates.used_value = (Number(item.usedValue||0) + (n * (Number(item.price)||0)));
-          }
-          await updateItemOnServer(itemId, updates);
-        }
-        async function fetchAlerts() {
-  const token = localStorage.getItem("token");
-  const res = await fetch(`${API_BASE_URL}/alerts`, {
-    headers: { "Authorization": `Bearer ${token}` }
-  });
-  const alerts = await res.json();
+   <script>
+// === SmartStock Dashboard Script (Part 1/3) ===
+// Base API configuration
+const API_BASE = 'https://smartstock-qre1.onrender.com';
 
-  if (alerts.length > 0) {
-    const msg = alerts.map(a => 
-      `⚠️ ${a.pname} expires in ${a.days_left} days`
-    ).join("\n");
-    alert(msg); // or display in a styled notification box
+// Global variables
+let currentUser = null;
+let inventory = [];
+
+// Utility: Show alerts or errors
+function showAlert(message, type = 'info') {
+  const alertBox = document.getElementById('alertBox');
+  if (!alertBox) return;
+  alertBox.innerHTML = `<div class="alert ${type}">${message}</div>`;
+  setTimeout(() => (alertBox.innerHTML = ''), 3000);
+}
+
+// Load current user from localStorage
+function loadUser() {
+  const userData = localStorage.getItem('smartstock_user');
+  if (userData) {
+    currentUser = JSON.parse(userData);
+    document.getElementById('username').innerText = currentUser.name;
+  } else {
+    window.location.href = 'index.html'; // Redirect to login
   }
 }
-window.onload = fetchAlerts;
 
-      
-        // ---------- render ----------
-        function render(){
-          let list = [...inventory];
-          const filter = (categoryFilter && categoryFilter.value) || 'All';
-          if(filter && filter !== 'All') list = list.filter(i => i.category === filter);
-          const sort = (sortSelect && sortSelect.value) || 'new';
-          if(sort === 'name') list.sort((a,b)=> a.name.localeCompare(b.name));
-          else if(sort === 'qty_desc') list.sort((a,b)=> b.qty - a.qty);
-          else if(sort === 'qty_asc') list.sort((a,b)=> a.qty - b.qty);
-          else list.sort((a,b)=> (b.createdAt||0) - (a.createdAt||0));
-      
-          inventoryBody.innerHTML = '';
-          if(list.length === 0) {
-            inventoryBody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-gray-400">No items found in this view.</td></tr>';
-          } else {
-            list.forEach(item=>{
-              const isLow = (Number(item.qty)||0) <= LOW_STOCK_THRESHOLD;
-              const expired = isExpired(item.expiry);
-              const tr = document.createElement('tr');
-              tr.className = `${isLow ? 'bg-red-50 hover:bg-red-100' : 'bg-white hover:bg-gray-50'} ${expired ? 'opacity-50' : ''}`;
-              tr.innerHTML = `
-                <td class="px-4 py-3 text-sm font-medium text-gray-900 truncate">${escapeHtml(item.name)} ${expired ? '<span class="text-xs text-red-500 font-semibold">(Expired)</span>' : ''}</td>
-                <td class="px-4 py-3 text-sm text-gray-500">${escapeHtml(item.category)}</td>
-                <td class="px-4 py-3 text-sm text-gray-900">
-                  <div class="flex items-center space-x-2">
-                    <span>${item.qty}</span>
-                    <button data-id="${item.id}" data-action="use-1" class="text-xs px-2 py-0.5 border border-primary-green text-primary-green rounded-md hover:bg-primary-green hover:text-white transition duration-150">Use -1</button>
-                  </div>
-                </td>
-                <td class="px-4 py-3 text-sm text-gray-900">₹ ${Number(item.price||0).toFixed(2)}</td>
-                <td class="px-4 py-3 text-sm ${expired ? 'text-red-600 font-semibold' : 'text-gray-900'}">${formatExpiry(item.expiry)}</td>
-                <td class="px-4 py-3 text-sm font-medium">
-                  <button data-id="${item.id}" data-action="edit" class="text-primary-green hover:text-emerald-600 transition duration-150 mr-2">Edit</button>
-                  <button data-id="${item.id}" data-action="delete" class="text-danger hover:text-red-600 transition duration-150">Delete</button>
-                </td>
-              `;
-              tr.querySelectorAll('button').forEach(btn=>{
-                const id = btn.dataset.id;
-                const action = btn.dataset.action;
-                if(action === 'edit') btn.addEventListener('click', ()=> openEditModal(id));
-                if(action === 'delete') btn.addEventListener('click', ()=> deleteItemOnServer(id));
-                if(action === 'use-1') btn.addEventListener('click', ()=> useItemOnServer(id,1));
-              });
-              inventoryBody.appendChild(tr);
-            });
-          }
-          updateStatsAndUI();
-        }
-      
-        function updateStatsAndUI(){
-          const counts = {'Groceries':0,'Medicines':0,'Packaged Food':0,'Dairy & Milk Products':0};
-          let low = [], totalVal=0, savings=0, totalItems=0;
-          for(const it of inventory){
-            totalItems++;
-            if(counts[it.category] !== undefined) counts[it.category] += 1;
-            if((Number(it.qty)||0) <= LOW_STOCK_THRESHOLD) low.push(it);
-            if(!isExpired(it.expiry)) totalVal += (Number(it.price)||0) * (Number(it.qty)||0);
-            savings += Number(it.usedValue||0);
-          }
-          if(countTotal) countTotal.textContent = totalItems;
-          if(countGroceries) countGroceries.textContent = counts['Groceries'];
-          if(countMedicines) countMedicines.textContent = counts['Medicines'];
-          if(countPackaged) countPackaged.textContent = counts['Packaged Food'];
-          if(countDairy) countDairy.textContent = counts['Dairy & Milk Products'];
-          if(countLow) countLow.textContent = low.length;
-          if(lowCount) lowCount.textContent = low.length;
-          if(totalValueEl) totalValueEl.textContent = totalVal.toFixed(2);
-          if(savingsValueEl) savingsValueEl.textContent = savings.toFixed(2);
-      
-          if(alertDropdown){
-            alertDropdown.innerHTML = '';
-            if(low.length === 0) alertDropdown.innerHTML = '<div class="p-2 text-sm text-gray-500">No low stock items — all good 👍</div>';
-            else {
-              low.forEach(i=>{
-                const d = document.createElement('div');
-                d.className = 'p-2 rounded-lg bg-red-50 text-sm text-red-700 hover:bg-red-100 cursor-pointer mb-1 flex justify-between items-center';
-                d.innerHTML = `<span class="font-medium">${escapeHtml(i.name)}</span><span class="font-bold">${i.qty} units</span>`;
-                d.addEventListener('click', ()=> openEditModal(i.id));
-                alertDropdown.appendChild(d);
-              });
-            }
-          }
-      
-          if(chart){
-            const data = CATEGORY_LABELS.map(lbl => inventory.filter(it=>it.category===lbl).reduce((s,c)=>s+(Number(c.qty)||0),0));
-            chart.data.datasets[0].data = data;
-            chart.update();
-          }
-        }
-      
-        // ---------- modal and form ----------
-        function clearAddForm(){ if(nameInput) nameInput.value=''; if(qtyInput) qtyInput.value=''; if(priceInput) priceInput.value=''; if(expiryInput) expiryInput.value=''; if(categoryInput) categoryInput.selectedIndex = 0; }
-      
-        function openEditModal(id){
-          const item = inventory.find(x=>x.id===id);
-          if(!item) return;
-          editingId = id;
-          if(modalTitle) modalTitle.textContent = 'Edit Item: ' + item.name;
-          if(modalName) modalName.value = item.name;
-          if(modalQty) modalQty.value = item.qty;
-          if(modalPrice) modalPrice.value = item.price;
-          if(modalExpiry) modalExpiry.value = item.expiry || '';
-          if(modalCategory) modalCategory.value = item.category || CATEGORY_LABELS[0];
-          if(modalBackdrop) modalBackdrop.classList.remove('hidden');
-        }
-        function closeModal(){ editingId = null; if(modalBackdrop) modalBackdrop.classList.add('hidden'); }
-      
-        async function handleSaveModal(e){
-          e && e.preventDefault();
-          if(!editingId) return;
-          const updates = {
-            pname: modalName.value.trim(),
-            qty: Number(modalQty.value) || 0,
-            price: Number(modalPrice.value) || 0,
-            expiry: modalExpiry.value || null,
-            category: modalCategory.value
-          };
-          await updateItemOnServer(editingId, updates);
-          closeModal();
-        }
-        async function handleDeleteFromModal(e){
-          e && e.preventDefault();
-          if(!editingId) return;
-          await deleteItemOnServer(editingId);
-          closeModal();
-        }
-      
-        // ---------- logout ----------
-        function performLogout(){
-          clearAuth();
-          window.location.href = 'index.html';
-        }
-      
-        // ---------- init/wiring ----------
-        async function init(){
-          // ensure basic auth keys are present; if access token missing, try refresh before making calls
-          if(!ensureAuth()) return;
-          // if access token missing but refresh exists, attempt refresh
-          if(!getAccessToken() && getRefreshToken()){
-            showLoading();
-            try {
-              const got = await refreshAccessToken();
-              if(!got){
-                clearAuth();
-                window.location.href = 'index.html';
-                return;
-              }
-            } finally {
-              hideLoading();
-            }
-          }
-          showLoading();
-          try { await fetchInventoryFromServer(); }
-          finally { hideLoading(); }
-        }
-      
-        document.addEventListener('DOMContentLoaded', ()=>{
-          if(!ensureAuth()) return;
-          init();
-          if(addBtn) addBtn.addEventListener('click', addItemToServer);
-          if(logoutBtn) logoutBtn.addEventListener('click', performLogout);
-          if(categoryFilter) categoryFilter.addEventListener('change', render);
-          if(sortSelect) sortSelect.addEventListener('change', render);
-      
-          if(modalCancel) modalCancel.addEventListener('click', (e)=>{ e.preventDefault(); closeModal(); });
-          if(modalSave) modalSave.addEventListener('click', handleSaveModal);
-          if(modalDelete) modalDelete.addEventListener('click', handleDeleteFromModal);
-      
-          if(lowAlertBox) lowAlertBox.addEventListener('click', (e)=>{ e.stopPropagation(); if(alertDropdown) alertDropdown.classList.toggle('hidden'); });
-          document.addEventListener('click', (e)=>{ if(alertDropdown && !alertDropdown.classList.contains('hidden') && lowAlertBox && !lowAlertBox.contains(e.target)) alertDropdown.classList.add('hidden'); });
-      
-          // bind modal interactions (safety)
-          if(modalBackdrop) modalBackdrop.addEventListener('click', (e)=>{ if(e.target === modalBackdrop) closeModal(); });
-        });
-      
-      })();
-      </script>
-      
+// Logout
+function logout() {
+  localStorage.removeItem('smartstock_user');
+  window.location.href = 'index.html';
+}
 
+// Fetch Inventory for user
+async function fetchInventory() {
+  if (!currentUser) return showAlert('User not logged in', 'error');
+
+  try {
+    const res = await fetch(`${API_BASE}/inventory/${currentUser.id}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!res.ok) throw new Error(`Server Error: ${res.status}`);
+
+    const data = await res.json();
+    inventory = data.inventory || [];
+    renderInventory();
+  } catch (err) {
+    console.error(err);
+    showAlert('ERROR: Unable to fetch inventory (network or server).', 'error');
+  }
+}
+// === SmartStock Dashboard Script (Part 2/3) ===
+
+// Render inventory table
+function renderInventory() {
+  const tbody = document.getElementById('inventoryTableBody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  if (inventory.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;">No items found</td></tr>`;
+    return;
+  }
+
+  inventory.forEach((item, index) => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${index + 1}</td>
+      <td>${item.name}</td>
+      <td>${item.category}</td>
+      <td>${item.quantity}</td>
+      <td>${item.price}</td>
+      <td>
+        <button class="btn-edit" onclick="editItem(${item.id})">Edit</button>
+        <button class="btn-delete" onclick="deleteItem(${item.id})">Delete</button>
+      </td>
+    `;
+    tbody.appendChild(row);
+  });
+}
+
+// Add a new item
+async function addItem(event) {
+  event.preventDefault();
+
+  const name = document.getElementById('itemName').value.trim();
+  const category = document.getElementById('itemCategory').value.trim();
+  const quantity = parseInt(document.getElementById('itemQuantity').value);
+  const price = parseFloat(document.getElementById('itemPrice').value);
+
+  if (!name || !category || isNaN(quantity) || isNaN(price)) {
+    return showAlert('Please fill all fields correctly.', 'error');
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/add_item/${currentUser.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, category, quantity, price }),
+    });
+
+    if (!res.ok) throw new Error(`Failed to add item (${res.status})`);
+    await fetchInventory();
+    showAlert('Item added successfully!', 'success');
+    document.getElementById('addItemForm').reset();
+  } catch (err) {
+    console.error(err);
+    showAlert('Unable to add item.', 'error');
+  }
+}
+// === SmartStock Dashboard Script (Part 3/3) ===
+
+// Edit item
+async function editItem(itemId) {
+  const item = inventory.find(i => i.id === itemId);
+  if (!item) return showAlert('Item not found.', 'error');
+
+  const newName = prompt('Enter new name:', item.name);
+  const newQty = prompt('Enter new quantity:', item.quantity);
+  const newPrice = prompt('Enter new price:', item.price);
+
+  if (!newName || !newQty || !newPrice) return;
+
+  try {
+    const res = await fetch(`${API_BASE}/update_item/${currentUser.id}/${itemId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: newName,
+        category: item.category,
+        quantity: parseInt(newQty),
+        price: parseFloat(newPrice),
+      }),
+    });
+
+    if (!res.ok) throw new Error(`Failed to update item (${res.status})`);
+    await fetchInventory();
+    showAlert('Item updated successfully!', 'success');
+  } catch (err) {
+    console.error(err);
+    showAlert('Unable to update item.', 'error');
+  }
+}
+
+// Delete item
+async function deleteItem(itemId) {
+  if (!confirm('Are you sure you want to delete this item?')) return;
+
+  try {
+    const res = await fetch(`${API_BASE}/delete_item/${currentUser.id}/${itemId}`, {
+      method: 'DELETE',
+    });
+
+    if (!res.ok) throw new Error(`Failed to delete item (${res.status})`);
+    await fetchInventory();
+    showAlert('Item deleted successfully!', 'success');
+  } catch (err) {
+    console.error(err);
+    showAlert('Unable to delete item.', 'error');
+  }
+}
+
+// Initialize dashboard
+window.addEventListener('DOMContentLoaded', async () => {
+  loadUser();
+  await fetchInventory();
+  const form = document.getElementById('addItemForm');
+  if (form) form.addEventListener('submit', addItem);
+  document.getElementById('logou
+</script>
 </body>
+
 </html>
