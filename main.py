@@ -5,9 +5,9 @@
 import os
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, Optional, List
+from typing import Dict, Optional
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -37,15 +37,24 @@ JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRES_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRES_MINUTES", "60"))
 REFRESH_TOKEN_EXPIRES_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRES_DAYS", "7"))
 
+# Optional CORS origins env var (comma separated)
+# Example: CORS_ORIGINS="https://rehaan0745.github.io"
+_raw_origins = os.getenv("CORS_ORIGINS", "*")
+CORS_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 # -----------------------
 # FastAPI app + CORS
 # -----------------------
 app = FastAPI(title="SmartStock API (final)")
 
+# If wildcard only, keep "*" (but then allow_credentials must be False)
+use_wildcard = len(CORS_ORIGINS) == 1 and CORS_ORIGINS[0] == "*"
+allow_credentials = False if use_wildcard else True
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # lock this down in production to your frontend origin(s)
-    allow_credentials=True,
+    allow_origins="*" if use_wildcard else CORS_ORIGINS,
+    allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -69,12 +78,13 @@ def get_db():
 security = HTTPBearer()
 ph = PasswordHasher()
 
+
 def create_token(payload: Dict, expires_delta: timedelta, token_type: str) -> str:
     to_encode = payload.copy()
     to_encode.update({"exp": datetime.utcnow() + expires_delta, "type": token_type})
     token = jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
-    # PyJWT returns a str in v2.x
     return token
+
 
 def decode_token(token: str) -> Dict:
     try:
@@ -83,6 +93,7 @@ def decode_token(token: str) -> Dict:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
 
 def require_access_token(creds: HTTPAuthorizationCredentials = Depends(security)) -> Dict:
     if not creds or creds.scheme.lower() != "bearer":
@@ -100,9 +111,11 @@ class Register(BaseModel):
     email: str
     password: str
 
+
 class Login(BaseModel):
     username: str
     password: str
+
 
 class InventoryItemIn(BaseModel):
     item_name: str
@@ -113,11 +126,14 @@ class InventoryItemIn(BaseModel):
     exp_date: Optional[str] = None  # "YYYY-MM-DD"
     price: float
 
+
 class RefreshIn(BaseModel):
     refresh_token: str
 
+
 class ExpiryAlertIn(BaseModel):
     msg: str
+
 
 # -----------------------
 # Static frontend mount (optional)
@@ -128,6 +144,14 @@ if os.path.isdir(frontend_dir):
     logger.info("Mounted frontend from: %s", frontend_dir)
 else:
     logger.info("No frontend folder found; API-only mode.")
+
+# -----------------------
+# Root helpful route for quick checks
+# -----------------------
+@app.get("/")
+def root():
+    return {"message": "SmartStock API running", "env": {"cors_origins": CORS_ORIGINS}}
+
 
 # -----------------------
 # Auth endpoints
@@ -155,6 +179,7 @@ def register(user: Register):
     finally:
         cur.close()
         conn.close()
+
 
 @app.post("/login")
 def login(credentials: Login):
@@ -184,6 +209,7 @@ def login(credentials: Login):
         cur.close()
         conn.close()
 
+
 @app.post("/refresh")
 def refresh(req: RefreshIn):
     try:
@@ -194,18 +220,16 @@ def refresh(req: RefreshIn):
         raise HTTPException(status_code=401, detail="Invalid refresh token")
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Invalid token type")
-    new_access = create_token({"sub": payload.get("sub"), "username": payload.get("username")}, timedelta(minutes=ACCESS_TOKEN_EXPIRES_MINUTES), "access")
+    new_access = create_token({"sub": payload.get("sub"), "username": payload.get("username")},
+                              timedelta(minutes=ACCESS_TOKEN_EXPIRES_MINUTES), "access")
     return {"access_token": new_access, "token_type": "bearer", "expires_in_minutes": ACCESS_TOKEN_EXPIRES_MINUTES}
+
 
 # -----------------------
 # Inventory endpoints
-# (Supports both /inventory and /inventory/{user_id})
 # -----------------------
 @app.get("/inventory")
 def get_inventory(token_payload: Dict = Depends(require_access_token)):
-    """
-    Returns the current authenticated user's inventory.
-    """
     user_id = token_payload.get("sub")
     conn = get_db()
     cur = conn.cursor()
@@ -223,12 +247,9 @@ def get_inventory(token_payload: Dict = Depends(require_access_token)):
         cur.close()
         conn.close()
 
+
 @app.get("/inventory/{user_id}")
 def get_inventory_by_user(user_id: int, token_payload: Dict = Depends(require_access_token)):
-    """
-    Returns inventory for user_id if the token belongs to that user.
-    This preserves compatibility with older frontend code that called /inventory/{id}.
-    """
     if str(token_payload.get("sub")) != str(user_id):
         raise HTTPException(status_code=403, detail="Token does not belong to requested user")
     conn = get_db()
@@ -246,6 +267,7 @@ def get_inventory_by_user(user_id: int, token_payload: Dict = Depends(require_ac
     finally:
         cur.close()
         conn.close()
+
 
 @app.post("/add_item/{user_id}")
 def add_item(user_id: int, item: InventoryItemIn, token_payload: Dict = Depends(require_access_token)):
@@ -268,6 +290,7 @@ def add_item(user_id: int, item: InventoryItemIn, token_payload: Dict = Depends(
     finally:
         cur.close()
         conn.close()
+
 
 @app.put("/update_item/{user_id}/{item_id}")
 def update_item(user_id: int, item_id: int, updates: InventoryItemIn, token_payload: Dict = Depends(require_access_token)):
@@ -294,6 +317,7 @@ def update_item(user_id: int, item_id: int, updates: InventoryItemIn, token_payl
         cur.close()
         conn.close()
 
+
 @app.delete("/delete_item/{user_id}/{item_id}")
 def delete_item(user_id: int, item_id: int, token_payload: Dict = Depends(require_access_token)):
     if str(token_payload.get("sub")) != str(user_id):
@@ -315,6 +339,7 @@ def delete_item(user_id: int, item_id: int, token_payload: Dict = Depends(requir
     finally:
         cur.close()
         conn.close()
+
 
 # -----------------------
 # Alerts
@@ -342,6 +367,7 @@ def create_alert(user_id: int, inventory_id: int, body: ExpiryAlertIn, token_pay
         cur.close()
         conn.close()
 
+
 @app.get("/alerts/{user_id}")
 def list_alerts(user_id: int, token_payload: Dict = Depends(require_access_token)):
     if str(token_payload.get("sub")) != str(user_id):
@@ -365,12 +391,14 @@ def list_alerts(user_id: int, token_payload: Dict = Depends(require_access_token
         cur.close()
         conn.close()
 
+
 # -----------------------
 # Health
 # -----------------------
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
 
 # -----------------------
 # Deterministic requirements (written at runtime if run directly)
@@ -383,6 +411,7 @@ REQUIREMENTS = [
     "pydantic>=1.10.7",
     "PyJWT>=2.8.0"
 ]
+
 
 if __name__ == "__main__":
     try:
