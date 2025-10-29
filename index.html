@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartStock - Home Inventory Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'primary-green': '#10B981',
+                        'dark-bg': '#0F172A',
+                        'card-bg': '#1E293B',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            scroll-behavior: smooth;
+        }
+        .feature-card {
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1),
+                        0 2px 4px -2px rgba(0,0,0,0.06);
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 antialiased">
+
+    <!-- Header -->
+    <header class="bg-white shadow-xl sticky top-0 z-10">
+        <nav class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+            <h1 class="text-2xl font-extrabold text-primary-green">SmartStock</h1>
+            <div class="space-x-4">
+                <a href="#intro" class="text-gray-600 hover:text-primary-green font-medium">Home</a>
+                <a href="#features" class="text-gray-600 hover:text-primary-green font-medium">Features</a>
+                <a href="login.html" id="nav-access"
+                   class="text-primary-green border border-primary-green hover:bg-primary-green hover:text-white py-1 px-4 rounded-full font-semibold">
+                   Login
+                </a>
+            </div>
+        </nav>
+    </header>
+
+    <!-- Main -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+        <!-- Hero Section -->
+        <section id="intro" class="bg-dark-bg text-white p-10 md:p-16 rounded-2xl shadow-2xl mb-16 text-center">
+            <p class="text-primary-green text-sm uppercase font-semibold mb-3 tracking-wider">The Intelligent Home Manager</p>
+            <h2 class="text-4xl md:text-7xl font-extrabold leading-tight mb-6 tracking-tighter">
+                SmartStock: Centralized Access to Your Home Inventory
+            </h2>
+            <p class="text-gray-300 max-w-4xl mx-auto text-lg mb-8">
+                SmartStock provides a seamless, secure platform to track, manage, and analyze every item in your home.
+                Built with a focus on real-time data, predictive insights, and a robust PostgreSQL backend.
+            </p>
+            <a href="login.html"
+               class="bg-primary-green hover:bg-emerald-600 text-white font-bold py-3 px-10 rounded-xl shadow-lg transition duration-300 transform hover:scale-105">
+                Login/Register to move ahead
+            </a>
+            <p class="text-gray-400 text-xs mt-3">Powered by JS and PostgreSQL.</p>
+        </section>
+
+        <!-- Features -->
+        <section id="features" class="py-12 mt-10">
+            <h3 class="text-3xl md:text-4xl font-extrabold text-gray-900 mb-10 text-center">
+                Core Functionalities & Technical Focus
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+
+                <!-- PostgreSQL -->
+                <div class="bg-white p-6 rounded-xl feature-card border-t-4 border-primary-green hover:shadow-2xl transition duration-300 transform hover:-translate-y-1">
+                    <div class="text-primary-green mb-3">
+                        <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                  d="M4 7v10h16V7a2 2 0 00-2-2H6a2 2 0 00-2 2z"></path>
+                        </svg>
+                    </div>
+                    <h4 class="text-xl font-bold mb-3">Robust PostgreSQL Backend</h4>
+                    <ul class="text-gray-700 text-base list-disc pl-5 space-y-2">
+                        <li><strong>Secure Storage:</strong> User and inventory data safely stored in PostgreSQL.</li>
+                        <li><strong>Argon2 Hashing:</strong> Passwords are encrypted using <code>argon2</code> before saving.</li>
+                        <li><strong>Dynamic Data:</strong> Categories auto-update based on added inventory.</li>
+                        <li><strong>FastAPI API:</strong> Communication via REST endpoints for login & registration.</li>
+                    </ul>
+                </div>
+
+                <!-- Dashboard -->
+                <div class="bg-white p-6 rounded-xl feature-card border-t-4 border-primary-green hover:shadow-2xl transition duration-300 transform hover:-translate-y-1">
+                    <div class="text-primary-green mb-3">
+                        <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                  d="M9.75 17L9 20l-1 1h8l-1-1v-3m0 0V9a2 2 0 00-2-2h-4a2 2 0 00-2 2v8m0 0H9m2-2h4"></path>
+                        </svg>
+                    </div>
+                    <h4 class="text-xl font-bold mb-3">Interactive Dashboard Management</h4>
+                    <ul class="text-gray-700 text-base list-disc pl-5 space-y-2">
+                        <li>Real-time display of items in responsive layout.</li>
+                        <li>Inline editing and auto updates from backend API.</li>
+                        <li>Critical warnings for low stock and expiry alerts.</li>
+                    </ul>
+                </div>
+
+                <!-- Analytics -->
+                <div class="bg-white p-6 rounded-xl feature-card border-t-4 border-primary-green hover:shadow-2xl transition duration-300 transform hover:-translate-y-1">
+                    <div class="text-primary-green mb-3">
+                        <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                  d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z"></path>
+                        </svg>
+                    </div>
+                    <h4 class="text-xl font-bold mb-3">Insightful Analytics & Expiry Control</h4>
+                    <ul class="text-gray-700 text-base list-disc pl-5 space-y-2">
+                        <li>Visual analytics with Chart.js.</li>
+                        <li>Highlight soon-expiring items.</li>
+                        <li>Modern animated UI with consistent theming.</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-dark-bg text-white mt-16 py-6 text-center text-sm">
+        <p>&copy; 2025 SmartStock: Intelligent Home Inventory.</p>
+    </footer>
+
+    <!-- PostgreSQL + Argon2 Backend Communication Example -->
+    <script>
+        // Example API call (replace URL with your backend FastAPI endpoint)
+        async function testConnection() {
+            try {
+                const response = await fetch("http://localhost:8000/api/status");
+                const data = await response.json();
+                console.log("Backend status:", data);
+            } catch (error) {
+                console.error("Backend unreachable:", error);
+            }
+        }
+        testConnection();
+    </script>
+
+</body>
+</html>
