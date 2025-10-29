@@ -125,113 +125,120 @@ body {
     </div>
   </div>
 
-<script>
-// --- login.js ---
-// Handles login form, ghost animation, and token storage
-
-const loginForm = document.getElementById("loginForm");
-const ghost = document.querySelector(".ghost");
-const eyes = document.querySelectorAll(".eye");
-const emailInput = document.getElementById("email");
-const passwordInput = document.getElementById("password");
-
-const API_BASE = "http://127.0.0.1:8000";
-
-// 👁 Ghost eyes follow cursor
-document.addEventListener("mousemove", (e) => {
-  eyes.forEach((eye) => {
-    const rect = eye.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-    const rad = Math.atan2(e.pageX - x, e.pageY - y);
-    const rot = rad * (180 / Math.PI) * -1 + 180;
-    eye.style.transform = `rotate(${rot}deg)`;
-  });
-});
-
-// 👻 Ghost hides on focus
-[ emailInput, passwordInput ].forEach((input) => {
-  input.addEventListener("focus", () => {
-    ghost.classList.add("hide");
-  });
-  input.addEventListener("blur", () => {
-    ghost.classList.remove("hide");
-  });
-});
-
-// 🪪 Login form submission
-loginForm.addEventListener("submit", async (e) => {
+  <script>
+    const ghost = document.getElementById('ghost');
+    const pupilLeft = document.getElementById('pupilLeft');
+    const pupilRight = document.getElementById('pupilRight');
+    const passwordInput = document.getElementById('password');
+    const regPasswordInput = document.getElementById('regPassword');
+    const loginForm = document.getElementById('loginForm');
+    const registerForm = document.getElementById('registerForm');
+    const toggleToRegister = document.getElementById('toggleToRegister');
+    const toggleToLogin = document.getElementById('toggleToLogin');
+    const messageBox = document.getElementById('message-box');
+    
+    // 👻 Ghost eye tracking
+    document.addEventListener('mousemove', e => {
+      const rect = ghost.getBoundingClientRect();
+      const x = e.clientX - (rect.left + rect.width / 2);
+      const y = e.clientY - (rect.top + rect.height / 2);
+      const angle = Math.atan2(y, x);
+      const move = 3;
+      const xMove = Math.cos(angle) * move;
+      const yMove = Math.sin(angle) * move;
+      [pupilLeft, pupilRight].forEach(p => {
+        p.style.left = `${10 + xMove}px`;
+        p.style.top = `${10 + yMove}px`;
+      });
+    });
+    
+    // 👁️ Shrink eyes when typing password
+    const shrink = () => [pupilLeft, pupilRight].forEach(p => p.style.transform = 'scale(0.1)');
+    const restore = () => [pupilLeft, pupilRight].forEach(p => p.style.transform = 'scale(1)');
+    passwordInput.addEventListener('focus', shrink);
+    passwordInput.addEventListener('blur', restore);
+    regPasswordInput.addEventListener('focus', shrink);
+    regPasswordInput.addEventListener('blur', restore);
+    
+    // 🔁 Toggle between forms
+    toggleToRegister.onclick = () => {
+      loginForm.classList.add('hidden');
+      registerForm.classList.remove('hidden');
+      toggleToRegister.classList.add('hidden');
+      toggleToLogin.classList.remove('hidden');
+    };
+    toggleToLogin.onclick = () => {
+      registerForm.classList.add('hidden');
+      loginForm.classList.remove('hidden');
+      toggleToLogin.classList.add('hidden');
+      toggleToRegister.classList.remove('hidden');
+    };
+    
+    // 📢 Message display helper
+    const showMessage = (type, text) => {
+      messageBox.textContent = text;
+      messageBox.classList.remove('hidden');
+      messageBox.style.background = type === 'success' ? '#DCFCE7' : '#FEE2E2';
+      messageBox.style.color = type === 'success' ? '#166534' : '#991B1B';
+    };
+    
+    // 🌍 Backend base URL (update this after deployment)
+    const BASE_URL = 'https://smartstock-qre1.onrender.com';
+// 🟢 Register
+async function handleRegister(e) {
   e.preventDefault();
-  const email = emailInput.value.trim();
-  const password = passwordInput.value.trim();
-
-  if (!email || !password) {
-    alert("Please fill all fields.");
-    return;
-  }
-
+  const email = document.getElementById('regEmail').value;
+  const username = document.getElementById('regUsername').value;
+  const password = document.getElementById('regPassword').value;
   try {
-    const res = await fetch(`${API_BASE}/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
+    const res = await fetch(`${BASE_URL}/register`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ email, username, password })
     });
-
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || "Login failed");
-    }
-
     const data = await res.json();
-    localStorage.setItem("token", data.access_token);
-    localStorage.setItem("user", JSON.stringify(data.user));
-    window.location.href = "dashboard.html";
-  } catch (error) {
-    console.error("Login Error:", error);
-    alert(`⚠️ ${error.message}`);
-  }
-});
-// --- verify.js ---
-// Ensures user is authenticated before loading dashboard
-
-const API_BASE = "http://127.0.0.1:8000";
-
-async function verifyAuth() {
-  const token = localStorage.getItem("token");
-  if (!token) {
-    alert("Session expired. Please log in again.");
-    window.location.href = "login.html";
-    return;
-  }
-
-  try {
-    const res = await fetch(`${API_BASE}/verify`, {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-      },
-    });
-
-    if (!res.ok) {
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      alert("Authentication failed. Please log in again.");
-      window.location.href = "login.html";
+    if (res.ok) {
+      showMessage('success', '✅ Registration successful! Please log in.');
+      toggleToLogin.click();
+    } else {
+      showMessage('error', data.detail || 'Registration failed.');
     }
-  } catch (err) {
-    console.error("Verify Error:", err);
-    alert("⚠️ Cannot connect to backend.");
-    window.location.href = "login.html";
+  } catch {
+    showMessage('error', '⚠️ Server unreachable.');
   }
 }
 
-verifyAuth();
+// 🔐 Login (JWT)
+async function handleLogin(e) {
+  e.preventDefault();
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value.trim();
+  if (!username || !password) return showMessage('error', 'Enter both username and password.');
 
+  try {
+    const res = await fetch(`${BASE_URL}/login`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ username, password })
+    });
 
+    const data = await res.json();
+    if (res.ok && data.access_token) {
+      showMessage('success', `Welcome, ${data.username}! Redirecting...`);
+      // Store tokens for dashboard use
+      localStorage.setItem('access_token', data.access_token);
+      localStorage.setItem('refresh_token', data.refresh_token);
+      localStorage.setItem('username', data.username);
+      localStorage.setItem('user_id', data.user_id);
+      setTimeout(() => window.location.replace('dashboard.html'), 1500);
+    } else {
+      showMessage('error', data.detail || 'Invalid credentials.');
+    }
+  } catch {
+    showMessage('error', '⚠️ Cannot connect to backend.');
+  }
+}
 </script>
-
     
 </body>
 </html>
-
-
