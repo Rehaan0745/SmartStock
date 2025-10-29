@@ -256,11 +256,9 @@
     </div>
 
 <script>
-// === SmartStock Dashboard Script ===
-// Base API configuration
+// === SmartStock Dashboard Script (Fixed) ===
 const API_BASE = 'https://smartstock-qre1.onrender.com';
 
-// Global variables
 let currentUser = null;
 let inventory = [];
 
@@ -272,31 +270,35 @@ function showAlert(message, type = 'info') {
   setTimeout(() => (alertBox.innerHTML = ''), 3000);
 }
 
-// Load current user from localStorage
+// Load current user and token
 function loadUser() {
-  const userData = localStorage.getItem('smartstock_user');
-  if (userData) {
-    currentUser = JSON.parse(userData);
-    const usernameEl = document.getElementById('username');
-    if (usernameEl) usernameEl.innerText = currentUser.name;
-  } else {
+  const username = localStorage.getItem('username');
+  const user_id = localStorage.getItem('user_id');
+  const access_token = localStorage.getItem('access_token');
+  if (!username || !user_id || !access_token) {
     window.location.href = 'index.html';
+    return;
   }
+  currentUser = { id: user_id, name: username, token: access_token };
+  document.getElementById('username').innerText = currentUser.name;
 }
 
 // Logout
 function logout() {
-  localStorage.removeItem('smartstock_user');
+  localStorage.clear();
   window.location.href = 'index.html';
 }
 
-// Fetch Inventory
+// Fetch Inventory for user
 async function fetchInventory() {
   if (!currentUser) return showAlert('User not logged in', 'error');
   try {
     const res = await fetch(`${API_BASE}/inventory/${currentUser.id}`, {
       method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUser.token}`,
+      },
     });
     if (!res.ok) throw new Error(`Server Error: ${res.status}`);
     const data = await res.json();
@@ -304,11 +306,11 @@ async function fetchInventory() {
     renderInventory();
   } catch (err) {
     console.error(err);
-    showAlert('ERROR: Unable to fetch inventory.', 'error');
+    showAlert('⚠️ Cannot connect to backend or invalid token.', 'error');
   }
 }
 
-// Render Inventory
+// Render inventory table
 function renderInventory() {
   const tbody = document.getElementById('inventoryTableBody');
   if (!tbody) return;
@@ -336,7 +338,7 @@ function renderInventory() {
   });
 }
 
-// Add Item
+// Add a new item
 async function addItem(event) {
   event.preventDefault();
   const name = document.getElementById('itemName').value.trim();
@@ -351,9 +353,13 @@ async function addItem(event) {
   try {
     const res = await fetch(`${API_BASE}/add_item/${currentUser.id}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUser.token}`,
+      },
       body: JSON.stringify({ name, category, quantity, price }),
     });
+
     if (!res.ok) throw new Error(`Failed to add item (${res.status})`);
     await fetchInventory();
     showAlert('Item added successfully!', 'success');
@@ -364,7 +370,7 @@ async function addItem(event) {
   }
 }
 
-// Edit Item
+// Edit item
 async function editItem(itemId) {
   const item = inventory.find(i => i.id === itemId);
   if (!item) return showAlert('Item not found.', 'error');
@@ -377,7 +383,10 @@ async function editItem(itemId) {
   try {
     const res = await fetch(`${API_BASE}/update_item/${currentUser.id}/${itemId}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUser.token}`,
+      },
       body: JSON.stringify({
         name: newName,
         category: item.category,
@@ -385,6 +394,7 @@ async function editItem(itemId) {
         price: parseFloat(newPrice),
       }),
     });
+
     if (!res.ok) throw new Error(`Failed to update item (${res.status})`);
     await fetchInventory();
     showAlert('Item updated successfully!', 'success');
@@ -394,12 +404,13 @@ async function editItem(itemId) {
   }
 }
 
-// Delete Item
+// Delete item
 async function deleteItem(itemId) {
   if (!confirm('Are you sure you want to delete this item?')) return;
   try {
     const res = await fetch(`${API_BASE}/delete_item/${currentUser.id}/${itemId}`, {
       method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${currentUser.token}` },
     });
     if (!res.ok) throw new Error(`Failed to delete item (${res.status})`);
     await fetchInventory();
@@ -410,32 +421,19 @@ async function deleteItem(itemId) {
   }
 }
 
-// === Buffering Ghost Animation Fix ===
-function hideLoader() {
-  const loader = document.getElementById('ghostLoader');
-  const dashboard = document.getElementById('dashboardMain');
-  if (loader && dashboard) {
-    loader.classList.add('fade-out');
-    setTimeout(() => {
-      loader.style.display = 'none';
-      dashboard.style.display = 'block';
-    }, 800);
-  }
-}
-
-// Initialize Dashboard
+// Initialize dashboard
 window.addEventListener('DOMContentLoaded', async () => {
   loadUser();
   await fetchInventory();
   const form = document.getElementById('addItemForm');
   if (form) form.addEventListener('submit', addItem);
-  const logoutBtn = document.getElementById('logoutBtn');
+  const logoutBtn = document.getElementById('logout');
   if (logoutBtn) logoutBtn.addEventListener('click', logout);
-  hideLoader();
 });
 </script>
 
 </body>
 
 </html>
+
 
