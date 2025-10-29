@@ -1,6 +1,5 @@
 # main.py
-# SmartStock — single-file backend aligned to users/inventory/expiry_alerts schema
-# Uses: fastapi, psycopg2, argon2-cffi, PyJWT
+# SmartStock — updated FastAPI backend with improved env parsing, CORS, and token debug helpers
 
 import os
 import logging
@@ -24,37 +23,68 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("smartstock")
 
 # -----------------------
+# Helpers
+# -----------------------
+def parse_int_expr(value: Optional[str], default: int) -> int:
+    """
+    Parse environment integer-like strings. Accept plain integers or a simple product like "60*24".
+    Falls back to default on parse errors.
+    """
+    if value is None:
+        return default
+    value = value.strip()
+    try:
+        if '*' in value:
+            parts = [int(p.strip()) for p in value.split('*') if p.strip()]
+            prod = 1
+            for p in parts:
+                prod *= p
+            return prod
+        return int(value)
+    except Exception:
+        logger.warning("Failed to parse int-like value '%s', using default %s", value, default)
+        return default
+
+def parse_cors_origins(value: Optional[str]):
+    """
+    Accept a single origin or a comma-separated list
+    """
+    if not value:
+        return ["*"]
+    value = value.strip()
+    if value == "*":
+        return ["*"]
+    return [o.strip() for o in value.split(",") if o.strip()]
+
+# -----------------------
 # Env / defaults (override via environment)
 # -----------------------
 DB_HOST = os.getenv("DB_HOST", "dpg-d3sd3e6r433s73cooo4g-a.singapore-postgres.render.com")
 DB_NAME = os.getenv("DB_NAME", "smart_inventory_f8ui")
 DB_USER = os.getenv("DB_USER", "rehaan")
 DB_PASS = os.getenv("DB_PASS", "ZnG4OPK2pNo3NOfgfOTPyRjzD6KzWW6r")
-DB_SSLMODE = os.getenv("DB_SSLMODE", "require")  # "disable" for local dev
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_SSLMODE = os.getenv("DB_SSL", "require")  # "require" or "disable"
 
 JWT_SECRET = os.getenv("JWT_SECRET", "change_this_super_secret_key")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRES_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRES_MINUTES", "60"))
-REFRESH_TOKEN_EXPIRES_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRES_DAYS", "7"))
+ACCESS_TOKEN_EXPIRES_MINUTES = parse_int_expr(os.getenv("ACCESS_TOKEN_EXPIRES_MINUTES", None), 60)
+REFRESH_TOKEN_EXPIRES_DAYS = parse_int_expr(os.getenv("REFRESH_TOKEN_EXPIRES_DAYS", None), 7)
 
-# Optional CORS origins env var (comma separated)
-# Example: CORS_ORIGINS="https://rehaan0745.github.io"
-_raw_origins = os.getenv("CORS_ORIGINS", "*")
-CORS_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+CORS_ORIGINS = parse_cors_origins(os.getenv("CORS_ORIGINS", "*"))
+
+logger.info("Configuration: ACCESS_TOKEN_EXPIRES_MINUTES=%s REFRESH_TOKEN_EXPIRES_DAYS=%s CORS_ORIGINS=%s",
+            ACCESS_TOKEN_EXPIRES_MINUTES, REFRESH_TOKEN_EXPIRES_DAYS, CORS_ORIGINS)
 
 # -----------------------
 # FastAPI app + CORS
 # -----------------------
 app = FastAPI(title="SmartStock API (final)")
 
-# If wildcard only, keep "*" (but then allow_credentials must be False)
-use_wildcard = len(CORS_ORIGINS) == 1 and CORS_ORIGINS[0] == "*"
-allow_credentials = False if use_wildcard else True
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins="*" if use_wildcard else CORS_ORIGINS,
-    allow_credentials=allow_credentials,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -63,14 +93,24 @@ app.add_middleware(
 # DB helper (sync psycopg2)
 # -----------------------
 def get_db():
-    return psycopg2.connect(
-        host=DB_HOST,
-        database=DB_NAME,
-        user=DB_USER,
-        password=DB_PASS,
-        cursor_factory=RealDictCursor,
-        sslmode=DB_SSLMODE
-    )
+    # Build dsn; return connection or raise
+    dsn = {
+        "host": DB_HOST,
+        "database": DB_NAME,
+        "user": DB_USER,
+        "password": DB_PASS,
+        "cursor_factory": RealDictCursor,
+    }
+    # include port and sslmode when present
+    if DB_PORT:
+        dsn["port"] = DB_PORT
+    if DB_SSLMODE:
+        dsn["sslmode"] = DB_SSLMODE
+    try:
+        return psycopg2.connect(**dsn)
+    except Exception as e:
+        logger.exception("Database connection failed")
+        raise HTTPException(status_code=500, detail="Database connection failed")
 
 # -----------------------
 # Auth / JWT helpers
@@ -78,29 +118,39 @@ def get_db():
 security = HTTPBearer()
 ph = PasswordHasher()
 
-
 def create_token(payload: Dict, expires_delta: timedelta, token_type: str) -> str:
     to_encode = payload.copy()
     to_encode.update({"exp": datetime.utcnow() + expires_delta, "type": token_type})
     token = jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
     return token
 
-
 def decode_token(token: str) -> Dict:
     try:
         return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
+        logger.warning("Token expired")
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
+        logger.exception("Invalid token")
         raise HTTPException(status_code=401, detail="Invalid token")
 
-
 def require_access_token(creds: HTTPAuthorizationCredentials = Depends(security)) -> Dict:
+    logger.debug("require_access_token called, creds present: %s", bool(creds))
     if not creds or creds.scheme.lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Invalid authentication scheme")
-    payload = decode_token(creds.credentials)
+        logger.warning("Invalid auth scheme: %s", creds)
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        logger.debug("Decoding token, length: %d", len(creds.credentials or ""))
+        payload = decode_token(creds.credentials)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unexpected token decode error")
+        raise HTTPException(status_code=401, detail="Not authenticated")
     if payload.get("type") != "access":
+        logger.warning("Invalid token type: %s", payload.get("type"))
         raise HTTPException(status_code=401, detail="Invalid token type")
+    logger.info("Token accepted for sub=%s", payload.get("sub"))
     return payload
 
 # -----------------------
@@ -111,11 +161,9 @@ class Register(BaseModel):
     email: str
     password: str
 
-
 class Login(BaseModel):
     username: str
     password: str
-
 
 class InventoryItemIn(BaseModel):
     item_name: str
@@ -126,14 +174,11 @@ class InventoryItemIn(BaseModel):
     exp_date: Optional[str] = None  # "YYYY-MM-DD"
     price: float
 
-
 class RefreshIn(BaseModel):
     refresh_token: str
 
-
 class ExpiryAlertIn(BaseModel):
     msg: str
-
 
 # -----------------------
 # Static frontend mount (optional)
@@ -144,14 +189,6 @@ if os.path.isdir(frontend_dir):
     logger.info("Mounted frontend from: %s", frontend_dir)
 else:
     logger.info("No frontend folder found; API-only mode.")
-
-# -----------------------
-# Root helpful route for quick checks
-# -----------------------
-@app.get("/")
-def root():
-    return {"message": "SmartStock API running", "env": {"cors_origins": CORS_ORIGINS}}
-
 
 # -----------------------
 # Auth endpoints
@@ -172,14 +209,16 @@ def register(user: Register):
         new = cur.fetchone()
         conn.commit()
         return {"message": "Registration successful", "user_id": new["id"] if new else None}
+    except HTTPException:
+        conn.rollback()
+        raise
     except Exception as e:
         conn.rollback()
         logger.exception("Registration failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Registration failed")
     finally:
         cur.close()
         conn.close()
-
 
 @app.post("/login")
 def login(credentials: Login):
@@ -209,7 +248,6 @@ def login(credentials: Login):
         cur.close()
         conn.close()
 
-
 @app.post("/refresh")
 def refresh(req: RefreshIn):
     try:
@@ -220,10 +258,8 @@ def refresh(req: RefreshIn):
         raise HTTPException(status_code=401, detail="Invalid refresh token")
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Invalid token type")
-    new_access = create_token({"sub": payload.get("sub"), "username": payload.get("username")},
-                              timedelta(minutes=ACCESS_TOKEN_EXPIRES_MINUTES), "access")
+    new_access = create_token({"sub": payload.get("sub"), "username": payload.get("username")}, timedelta(minutes=ACCESS_TOKEN_EXPIRES_MINUTES), "access")
     return {"access_token": new_access, "token_type": "bearer", "expires_in_minutes": ACCESS_TOKEN_EXPIRES_MINUTES}
-
 
 # -----------------------
 # Inventory endpoints
@@ -239,14 +275,14 @@ def get_inventory(token_payload: Dict = Depends(require_access_token)):
             FROM inventory WHERE user_id = %s ORDER BY date_added DESC
         """, (user_id,))
         items = cur.fetchall()
-        return {"items": items}
+        # return both keys for frontend compatibility
+        return {"items": items, "inventory": items}
     except Exception as e:
         logger.exception("Fetch inventory failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Fetch inventory failed")
     finally:
         cur.close()
         conn.close()
-
 
 @app.get("/inventory/{user_id}")
 def get_inventory_by_user(user_id: int, token_payload: Dict = Depends(require_access_token)):
@@ -260,14 +296,13 @@ def get_inventory_by_user(user_id: int, token_payload: Dict = Depends(require_ac
             FROM inventory WHERE user_id = %s ORDER BY date_added DESC
         """, (user_id,))
         items = cur.fetchall()
-        return {"items": items}
+        return {"items": items, "inventory": items}
     except Exception as e:
         logger.exception("Fetch inventory by user failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Fetch inventory failed")
     finally:
         cur.close()
         conn.close()
-
 
 @app.post("/add_item/{user_id}")
 def add_item(user_id: int, item: InventoryItemIn, token_payload: Dict = Depends(require_access_token)):
@@ -286,11 +321,10 @@ def add_item(user_id: int, item: InventoryItemIn, token_payload: Dict = Depends(
     except Exception as e:
         conn.rollback()
         logger.exception("Add item failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Add item failed")
     finally:
         cur.close()
         conn.close()
-
 
 @app.put("/update_item/{user_id}/{item_id}")
 def update_item(user_id: int, item_id: int, updates: InventoryItemIn, token_payload: Dict = Depends(require_access_token)):
@@ -312,11 +346,10 @@ def update_item(user_id: int, item_id: int, updates: InventoryItemIn, token_payl
     except Exception as e:
         conn.rollback()
         logger.exception("Update item failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Update item failed")
     finally:
         cur.close()
         conn.close()
-
 
 @app.delete("/delete_item/{user_id}/{item_id}")
 def delete_item(user_id: int, item_id: int, token_payload: Dict = Depends(require_access_token)):
@@ -335,11 +368,10 @@ def delete_item(user_id: int, item_id: int, token_payload: Dict = Depends(requir
     except Exception as e:
         conn.rollback()
         logger.exception("Delete item failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Delete item failed")
     finally:
         cur.close()
         conn.close()
-
 
 # -----------------------
 # Alerts
@@ -362,11 +394,10 @@ def create_alert(user_id: int, inventory_id: int, body: ExpiryAlertIn, token_pay
     except Exception as e:
         conn.rollback()
         logger.exception("Create alert failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Create alert failed")
     finally:
         cur.close()
         conn.close()
-
 
 @app.get("/alerts/{user_id}")
 def list_alerts(user_id: int, token_payload: Dict = Depends(require_access_token)):
@@ -386,11 +417,19 @@ def list_alerts(user_id: int, token_payload: Dict = Depends(require_access_token
         return {"alerts": rows}
     except Exception as e:
         logger.exception("List alerts failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="List alerts failed")
     finally:
         cur.close()
         conn.close()
 
+# -----------------------
+# Token verify helper (for debugging / quick checks)
+# -----------------------
+@app.get("/verify")
+def verify_token(creds: HTTPAuthorizationCredentials = Depends(security)):
+    # Quick verification endpoint. Returns token payload if valid.
+    payload = decode_token(creds.credentials)
+    return {"ok": True, "payload": payload}
 
 # -----------------------
 # Health
@@ -398,7 +437,6 @@ def list_alerts(user_id: int, token_payload: Dict = Depends(require_access_token
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
 
 # -----------------------
 # Deterministic requirements (written at runtime if run directly)
@@ -411,7 +449,6 @@ REQUIREMENTS = [
     "pydantic>=1.10.7",
     "PyJWT>=2.8.0"
 ]
-
 
 if __name__ == "__main__":
     try:
