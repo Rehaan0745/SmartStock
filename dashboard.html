@@ -290,6 +290,7 @@ function loadUser() {
   const access_token = localStorage.getItem('access_token');
 
   if (!username || !user_id || !access_token) {
+    console.warn("No user data found, redirecting to login...");
     window.location.href = 'login.html';
     return;
   }
@@ -314,7 +315,13 @@ async function fetchInventory() {
     });
 
     if (!res.ok) {
-      if (res.status === 401) throw new Error("Not authenticated");
+      if (res.status === 401) {
+        console.error("Unauthorized: Invalid or expired token.");
+        localStorage.clear();
+        showAlert("Session expired. Please log in again.");
+        window.location.href = "login.html";
+        return;
+      }
       throw new Error(`Server Error: ${res.status}`);
     }
 
@@ -322,7 +329,7 @@ async function fetchInventory() {
     inventory = data.inventory || [];
     renderInventory();
   } catch (err) {
-    console.error(err);
+    console.error("Fetch inventory failed:", err);
     showAlert('⚠️ Cannot connect to backend or invalid token.');
   } finally {
     hideLoader();
@@ -341,7 +348,7 @@ function renderInventory() {
     return;
   }
 
-  inventory.forEach((item, index) => {
+  inventory.forEach((item) => {
     const row = document.createElement('tr');
     row.className = 'hover:bg-gray-50 transition';
     row.innerHTML = `
@@ -367,7 +374,8 @@ async function addItem() {
   const expiry = document.getElementById('expiryInput').value;
   const category = document.getElementById('categoryInput').value;
 
-  if (!name || isNaN(qty) || isNaN(price)) return showAlert('Fill all fields correctly.');
+  if (!name || isNaN(qty) || isNaN(price))
+    return showAlert('Fill all fields correctly.');
 
   showLoader("Adding item...");
   try {
@@ -380,10 +388,19 @@ async function addItem() {
       body: JSON.stringify({ name, quantity: qty, price, expiry, category })
     });
 
-    if (!res.ok) throw new Error(`Error ${res.status}`);
+    if (!res.ok) {
+      if (res.status === 401) {
+        localStorage.clear();
+        showAlert("Session expired. Please log in again.");
+        window.location.href = "login.html";
+        return;
+      }
+      throw new Error(`Error ${res.status}`);
+    }
+
     await fetchInventory();
   } catch (err) {
-    console.error(err);
+    console.error("Add item failed:", err);
     showAlert('Failed to add item.');
   } finally {
     hideLoader();
@@ -399,10 +416,20 @@ async function deleteItem(itemId) {
       method: 'DELETE',
       headers: { 'Authorization': `Bearer ${currentUser.token}` }
     });
-    if (!res.ok) throw new Error(`Error ${res.status}`);
+
+    if (!res.ok) {
+      if (res.status === 401) {
+        localStorage.clear();
+        showAlert("Session expired. Please log in again.");
+        window.location.href = "login.html";
+        return;
+      }
+      throw new Error(`Error ${res.status}`);
+    }
+
     await fetchInventory();
   } catch (err) {
-    console.error(err);
+    console.error("Delete item failed:", err);
     showAlert('Failed to delete item.');
   } finally {
     hideLoader();
@@ -419,10 +446,10 @@ window.addEventListener('DOMContentLoaded', async () => {
 </script>
 
 
-
 </body>
 
 </html>
+
 
 
 
