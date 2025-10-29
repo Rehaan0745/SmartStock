@@ -255,8 +255,8 @@
         </div>
     </div>
 
-   <script>
-// === SmartStock Dashboard Script (Part 1/3) ===
+<script>
+// === SmartStock Dashboard Script ===
 // Base API configuration
 const API_BASE = 'https://smartstock-qre1.onrender.com';
 
@@ -277,9 +277,10 @@ function loadUser() {
   const userData = localStorage.getItem('smartstock_user');
   if (userData) {
     currentUser = JSON.parse(userData);
-    document.getElementById('username').innerText = currentUser.name;
+    const usernameEl = document.getElementById('username');
+    if (usernameEl) usernameEl.innerText = currentUser.name;
   } else {
-    window.location.href = 'index.html'; // Redirect to login
+    window.location.href = 'index.html';
   }
 }
 
@@ -289,29 +290,25 @@ function logout() {
   window.location.href = 'index.html';
 }
 
-// Fetch Inventory for user
+// Fetch Inventory
 async function fetchInventory() {
   if (!currentUser) return showAlert('User not logged in', 'error');
-
   try {
     const res = await fetch(`${API_BASE}/inventory/${currentUser.id}`, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
     });
-
     if (!res.ok) throw new Error(`Server Error: ${res.status}`);
-
     const data = await res.json();
     inventory = data.inventory || [];
     renderInventory();
   } catch (err) {
     console.error(err);
-    showAlert('ERROR: Unable to fetch inventory (network or server).', 'error');
+    showAlert('ERROR: Unable to fetch inventory.', 'error');
   }
 }
-// === SmartStock Dashboard Script (Part 2/3) ===
 
-// Render inventory table
+// Render Inventory
 function renderInventory() {
   const tbody = document.getElementById('inventoryTableBody');
   if (!tbody) return;
@@ -339,10 +336,9 @@ function renderInventory() {
   });
 }
 
-// Add a new item
+// Add Item
 async function addItem(event) {
   event.preventDefault();
-
   const name = document.getElementById('itemName').value.trim();
   const category = document.getElementById('itemCategory').value.trim();
   const quantity = parseInt(document.getElementById('itemQuantity').value);
@@ -358,7 +354,6 @@ async function addItem(event) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, category, quantity, price }),
     });
-
     if (!res.ok) throw new Error(`Failed to add item (${res.status})`);
     await fetchInventory();
     showAlert('Item added successfully!', 'success');
@@ -368,9 +363,8 @@ async function addItem(event) {
     showAlert('Unable to add item.', 'error');
   }
 }
-// === SmartStock Dashboard Script (Part 3/3) ===
 
-// Edit item
+// Edit Item
 async function editItem(itemId) {
   const item = inventory.find(i => i.id === itemId);
   if (!item) return showAlert('Item not found.', 'error');
@@ -378,7 +372,6 @@ async function editItem(itemId) {
   const newName = prompt('Enter new name:', item.name);
   const newQty = prompt('Enter new quantity:', item.quantity);
   const newPrice = prompt('Enter new price:', item.price);
-
   if (!newName || !newQty || !newPrice) return;
 
   try {
@@ -392,7 +385,6 @@ async function editItem(itemId) {
         price: parseFloat(newPrice),
       }),
     });
-
     if (!res.ok) throw new Error(`Failed to update item (${res.status})`);
     await fetchInventory();
     showAlert('Item updated successfully!', 'success');
@@ -402,15 +394,13 @@ async function editItem(itemId) {
   }
 }
 
-// Delete item
+// Delete Item
 async function deleteItem(itemId) {
   if (!confirm('Are you sure you want to delete this item?')) return;
-
   try {
     const res = await fetch(`${API_BASE}/delete_item/${currentUser.id}/${itemId}`, {
       method: 'DELETE',
     });
-
     if (!res.ok) throw new Error(`Failed to delete item (${res.status})`);
     await fetchInventory();
     showAlert('Item deleted successfully!', 'success');
@@ -420,14 +410,32 @@ async function deleteItem(itemId) {
   }
 }
 
-// Initialize dashboard
+// === Buffering Ghost Animation Fix ===
+function hideLoader() {
+  const loader = document.getElementById('ghostLoader');
+  const dashboard = document.getElementById('dashboardMain');
+  if (loader && dashboard) {
+    loader.classList.add('fade-out');
+    setTimeout(() => {
+      loader.style.display = 'none';
+      dashboard.style.display = 'block';
+    }, 800);
+  }
+}
+
+// Initialize Dashboard
 window.addEventListener('DOMContentLoaded', async () => {
   loadUser();
   await fetchInventory();
   const form = document.getElementById('addItemForm');
   if (form) form.addEventListener('submit', addItem);
-  document.getElementById('logou
+  const logoutBtn = document.getElementById('logoutBtn');
+  if (logoutBtn) logoutBtn.addEventListener('click', logout);
+  hideLoader();
+});
 </script>
+
 </body>
 
 </html>
+
