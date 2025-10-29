@@ -126,152 +126,102 @@ body {
   </div>
 
 <script>
-// === SmartStock Login Script (Part 1/2) ===
-// 👻 Ghost animation, form toggling, and UI behavior
+const API_BASE = "https://smartstock-qre1.onrender.com";
 
-const ghost = document.getElementById('ghost');
-const pupilLeft = document.getElementById('pupilLeft');
-const pupilRight = document.getElementById('pupilRight');
-const passwordInput = document.getElementById('password');
-const regPasswordInput = document.getElementById('regPassword');
-const loginForm = document.getElementById('loginForm');
-const registerForm = document.getElementById('registerForm');
-const toggleToRegister = document.getElementById('toggleToRegister');
-const toggleToLogin = document.getElementById('toggleToLogin');
-const messageBox = document.getElementById('message-box');
+// === Utility Functions ===
+function showAlert(message) {
+  alert(message);
+}
 
-// 👀 Ghost Eye Tracking
-document.addEventListener('mousemove', e => {
-  if (!ghost || !pupilLeft || !pupilRight) return;
-  const rect = ghost.getBoundingClientRect();
-  const x = e.clientX - (rect.left + rect.width / 2);
-  const y = e.clientY - (rect.top + rect.height / 2);
-  const angle = Math.atan2(y, x);
-  const move = 3;
-  const xMove = Math.cos(angle) * move;
-  const yMove = Math.sin(angle) * move;
-  [pupilLeft, pupilRight].forEach(p => {
-    p.style.left = `${10 + xMove}px`;
-    p.style.top = `${10 + yMove}px`;
-  });
+function showLoader(message = "Connecting to SmartStock...") {
+  const loader = document.getElementById("loadingOverlay");
+  if (loader) {
+    loader.style.display = "flex";
+    const textNode = loader.querySelector(".text-white");
+    if (textNode) textNode.textContent = message;
+    loader.classList.remove("opacity-0");
+  }
+}
+
+function hideLoader() {
+  const loader = document.getElementById("loadingOverlay");
+  if (loader) {
+    loader.classList.add("opacity-0");
+    setTimeout(() => (loader.style.display = "none"), 400);
+  }
+}
+
+// === Register ===
+async function registerUser() {
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("password").value.trim();
+
+  if (!email || !password) {
+    return showAlert("Please fill in all fields.");
+  }
+
+  showLoader("Registering user...");
+  try {
+    const res = await fetch(`${API_BASE}/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Registration failed");
+    showAlert("Registration successful! You can now log in.");
+  } catch (err) {
+    console.error(err);
+    showAlert("⚠️ Registration failed.");
+  } finally {
+    hideLoader();
+  }
+}
+
+// === Login ===
+async function loginUser() {
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("password").value.trim();
+
+  if (!email || !password) {
+    return showAlert("Please enter both email and password.");
+  }
+
+  showLoader("Logging in...");
+  try {
+    const res = await fetch(`${API_BASE}/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username: email, password }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Login failed");
+
+    localStorage.setItem("access_token", data.access_token);
+    localStorage.setItem("refresh_token", data.refresh_token);
+    localStorage.setItem("email", email);
+
+    window.location.href = "dashboard.html";
+  } catch (err) {
+    console.error(err);
+    showAlert("⚠️ Invalid credentials or server issue.");
+  } finally {
+    hideLoader();
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("loginBtn")?.addEventListener("click", loginUser);
+  document.getElementById("registerBtn")?.addEventListener("click", registerUser);
 });
-
-// 👁️ Shrink eyes when typing password
-const shrink = () => [pupilLeft, pupilRight].forEach(p => p.style.transform = 'scale(0.1)');
-const restore = () => [pupilLeft, pupilRight].forEach(p => p.style.transform = 'scale(1)');
-if (passwordInput) {
-  passwordInput.addEventListener('focus', shrink);
-  passwordInput.addEventListener('blur', restore);
-}
-if (regPasswordInput) {
-  regPasswordInput.addEventListener('focus', shrink);
-  regPasswordInput.addEventListener('blur', restore);
-}
-
-// 🔁 Toggle Login/Register Forms
-if (toggleToRegister && toggleToLogin && loginForm && registerForm) {
-  toggleToRegister.onclick = () => {
-    loginForm.classList.add('hidden');
-    registerForm.classList.remove('hidden');
-    toggleToRegister.classList.add('hidden');
-    toggleToLogin.classList.remove('hidden');
-  };
-  toggleToLogin.onclick = () => {
-    registerForm.classList.add('hidden');
-    loginForm.classList.remove('hidden');
-    toggleToLogin.classList.add('hidden');
-    toggleToRegister.classList.remove('hidden');
-  };
-}
-
-// 📢 Message display helper
-function showMessage(type, text) {
-  if (!messageBox) return console.log(`${type.toUpperCase()}: ${text}`);
-  messageBox.textContent = text;
-  messageBox.classList.remove('hidden');
-  messageBox.style.background = type === 'success' ? '#DCFCE7' : '#FEE2E2';
-  messageBox.style.color = type === 'success' ? '#166534' : '#991B1B';
-}
-// === SmartStock Login Script (Part 2/2) ===
-// 🌍 Backend base URL (FastAPI server)
-const BASE_URL = 'https://smartstock-qre1.onrender.com';
-
-// 🟢 Register user
-async function handleRegister(e) {
-  e.preventDefault();
-  const email = document.getElementById('regEmail').value.trim();
-  const username = document.getElementById('regUsername').value.trim();
-  const password = document.getElementById('regPassword').value.trim();
-
-  if (!email || !username || !password)
-    return showMessage('error', 'Please fill all fields.');
-
-  try {
-    const res = await fetch(`${BASE_URL}/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, username, password })
-    });
-
-    const data = await res.json();
-    if (res.ok) {
-      showMessage('success', '✅ Registration successful! Please log in.');
-      toggleToLogin.click();
-    } else {
-      showMessage('error', data.detail || 'Registration failed.');
-    }
-  } catch (err) {
-    console.error(err);
-    showMessage('error', '⚠️ Server unreachable.');
-  }
-}
-
-// 🔐 Login (JWT)
-async function handleLogin(e) {
-  e.preventDefault();
-  const username = document.getElementById('username').value.trim();
-  const password = document.getElementById('password').value.trim();
-  if (!username || !password)
-    return showMessage('error', 'Enter both username and password.');
-
-  try {
-    const res = await fetch(`${BASE_URL}/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password })
-    });
-
-    const data = await res.json();
-
-    if (res.ok && data.access_token) {
-      showMessage('success', `Welcome, ${data.username}! Redirecting...`);
-      // Store everything under one consistent key
-      const userData = {
-        user_id: data.user_id,
-        username: data.username,
-        access_token: data.access_token,
-        refresh_token: data.refresh_token
-      };
-      localStorage.setItem('smartstock_user', JSON.stringify(userData));
-
-      setTimeout(() => window.location.replace('dashboard.html'), 1500);
-    } else {
-      showMessage('error', data.detail || 'Invalid credentials.');
-    }
-  } catch (err) {
-    console.error(err);
-    showMessage('error', '⚠️ Cannot connect to backend.');
-  }
-}
-
-// ✳️ Bind submit handlers
-if (loginForm) loginForm.addEventListener('submit', handleLogin);
-if (registerForm) registerForm.addEventListener('submit', handleRegister);
 
 </script>
 
     
 </body>
 </html>
+
 
 
