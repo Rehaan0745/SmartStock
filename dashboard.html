@@ -256,184 +256,145 @@
     </div>
 
 <script>
-// === SmartStock Dashboard Script (Fixed) ===
 const API_BASE = 'https://smartstock-qre1.onrender.com';
-
 let currentUser = null;
 let inventory = [];
 
-// Utility: Show alerts or errors
-function showAlert(message, type = 'info') {
-  const alertBox = document.getElementById('alertBox');
-  if (!alertBox) return;
-  alertBox.innerHTML = `<div class="alert ${type}">${message}</div>`;
-  setTimeout(() => (alertBox.innerHTML = ''), 3000);
+// --- Utility Functions ---
+function showAlert(message) {
+  alert(message);
 }
 
-// Load current user and token
+function hideLoader() {
+  const loader = document.getElementById('loadingOverlay');
+  if (loader) {
+    loader.classList.add('opacity-0');
+    setTimeout(() => loader.remove(), 500);
+  }
+}
+
+// --- Load user data from localStorage ---
 function loadUser() {
   const username = localStorage.getItem('username');
   const user_id = localStorage.getItem('user_id');
   const access_token = localStorage.getItem('access_token');
   if (!username || !user_id || !access_token) {
-    window.location.href = 'index.html';
+    window.location.href = 'login.html';
     return;
   }
   currentUser = { id: user_id, name: username, token: access_token };
-  document.getElementById('username').innerText = currentUser.name;
+  document.getElementById('greeting').textContent = `Hello, ${currentUser.name} 👋`;
 }
 
-// Logout
+// --- Logout ---
 function logout() {
   localStorage.clear();
-  window.location.href = 'index.html';
+  window.location.href = 'login.html';
 }
 
-// Fetch Inventory for user
+// --- Fetch inventory ---
 async function fetchInventory() {
-  if (!currentUser) return showAlert('User not logged in', 'error');
   try {
     const res = await fetch(`${API_BASE}/inventory/${currentUser.id}`, {
-      method: 'GET',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${currentUser.token}`,
-      },
+        'Authorization': `Bearer ${currentUser.token}`
+      }
     });
     if (!res.ok) throw new Error(`Server Error: ${res.status}`);
     const data = await res.json();
     inventory = data.inventory || [];
     renderInventory();
+    hideLoader(); // hide loader after successful fetch
   } catch (err) {
     console.error(err);
-    showAlert('⚠️ Cannot connect to backend or invalid token.', 'error');
+    showAlert('⚠️ Cannot connect to backend or invalid token.');
+    hideLoader();
   }
 }
 
-// Render inventory table
+// --- Render inventory ---
 function renderInventory() {
-  const tbody = document.getElementById('inventoryTableBody');
-  if (!tbody) return;
+  const tbody = document.getElementById('inventoryBody');
   tbody.innerHTML = '';
-
   if (inventory.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;">No items found</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4">No items found</td></tr>`;
     return;
   }
 
   inventory.forEach((item, index) => {
     const row = document.createElement('tr');
+    row.className = 'hover:bg-gray-50 transition';
     row.innerHTML = `
-      <td>${index + 1}</td>
-      <td>${item.name}</td>
-      <td>${item.category}</td>
-      <td>${item.quantity}</td>
-      <td>${item.price}</td>
-      <td>
-        <button class="btn-edit" onclick="editItem(${item.id})">Edit</button>
-        <button class="btn-delete" onclick="deleteItem(${item.id})">Delete</button>
+      <td class="px-4 py-2">${item.name}</td>
+      <td class="px-4 py-2">${item.category}</td>
+      <td class="px-4 py-2">${item.quantity}</td>
+      <td class="px-4 py-2">₹${item.price}</td>
+      <td class="px-4 py-2">${item.expiry || '-'}</td>
+      <td class="px-4 py-2">
+        <button onclick="editItem(${item.id})" class="text-blue-600 hover:underline">Edit</button>
+        <button onclick="deleteItem(${item.id})" class="text-red-600 hover:underline ml-2">Delete</button>
       </td>
     `;
     tbody.appendChild(row);
   });
 }
 
-// Add a new item
-async function addItem(event) {
-  event.preventDefault();
-  const name = document.getElementById('itemName').value.trim();
-  const category = document.getElementById('itemCategory').value.trim();
-  const quantity = parseInt(document.getElementById('itemQuantity').value);
-  const price = parseFloat(document.getElementById('itemPrice').value);
+// --- Add new item ---
+async function addItem() {
+  const name = document.getElementById('nameInput').value.trim();
+  const qty = parseInt(document.getElementById('qtyInput').value);
+  const price = parseFloat(document.getElementById('priceInput').value);
+  const expiry = document.getElementById('expiryInput').value;
+  const category = document.getElementById('categoryInput').value;
 
-  if (!name || !category || isNaN(quantity) || isNaN(price)) {
-    return showAlert('Please fill all fields correctly.', 'error');
-  }
+  if (!name || isNaN(qty) || isNaN(price)) return showAlert('Fill all fields correctly.');
 
   try {
     const res = await fetch(`${API_BASE}/add_item/${currentUser.id}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${currentUser.token}`,
+        'Authorization': `Bearer ${currentUser.token}`
       },
-      body: JSON.stringify({ name, category, quantity, price }),
+      body: JSON.stringify({ name, quantity: qty, price, expiry, category })
     });
-
-    if (!res.ok) throw new Error(`Failed to add item (${res.status})`);
+    if (!res.ok) throw new Error(`Error ${res.status}`);
     await fetchInventory();
-    showAlert('Item added successfully!', 'success');
-    document.getElementById('addItemForm').reset();
   } catch (err) {
     console.error(err);
-    showAlert('Unable to add item.', 'error');
+    showAlert('Failed to add item.');
   }
 }
 
-// Edit item
-async function editItem(itemId) {
-  const item = inventory.find(i => i.id === itemId);
-  if (!item) return showAlert('Item not found.', 'error');
-
-  const newName = prompt('Enter new name:', item.name);
-  const newQty = prompt('Enter new quantity:', item.quantity);
-  const newPrice = prompt('Enter new price:', item.price);
-  if (!newName || !newQty || !newPrice) return;
-
-  try {
-    const res = await fetch(`${API_BASE}/update_item/${currentUser.id}/${itemId}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${currentUser.token}`,
-      },
-      body: JSON.stringify({
-        name: newName,
-        category: item.category,
-        quantity: parseInt(newQty),
-        price: parseFloat(newPrice),
-      }),
-    });
-
-    if (!res.ok) throw new Error(`Failed to update item (${res.status})`);
-    await fetchInventory();
-    showAlert('Item updated successfully!', 'success');
-  } catch (err) {
-    console.error(err);
-    showAlert('Unable to update item.', 'error');
-  }
-}
-
-// Delete item
+// --- Delete item ---
 async function deleteItem(itemId) {
-  if (!confirm('Are you sure you want to delete this item?')) return;
+  if (!confirm('Are you sure?')) return;
   try {
     const res = await fetch(`${API_BASE}/delete_item/${currentUser.id}/${itemId}`, {
       method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${currentUser.token}` },
+      headers: { 'Authorization': `Bearer ${currentUser.token}` }
     });
-    if (!res.ok) throw new Error(`Failed to delete item (${res.status})`);
+    if (!res.ok) throw new Error(`Error ${res.status}`);
     await fetchInventory();
-    showAlert('Item deleted successfully!', 'success');
   } catch (err) {
     console.error(err);
-    showAlert('Unable to delete item.', 'error');
+    showAlert('Failed to delete item.');
   }
 }
 
-// Initialize dashboard
+// --- Init ---
 window.addEventListener('DOMContentLoaded', async () => {
   loadUser();
+  document.getElementById('logoutBtn').addEventListener('click', logout);
+  document.getElementById('addBtn').addEventListener('click', addItem);
   await fetchInventory();
-  const form = document.getElementById('addItemForm');
-  if (form) form.addEventListener('submit', addItem);
-  const logoutBtn = document.getElementById('logout');
-  if (logoutBtn) logoutBtn.addEventListener('click', logout);
 });
 </script>
+
 
 </body>
 
 </html>
+
 
 
